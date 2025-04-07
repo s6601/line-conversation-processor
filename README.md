@@ -25,7 +25,7 @@ pip install -r requirements.txt
 
 3. 運行應用：
 ```bash
-python LINE對話取出.py
+python app.py
 ```
 
 4. 開啟瀏覽器訪問：`http://localhost:3000`

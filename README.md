@@ -2,6 +2,16 @@
 
 這是一個用於處理 LINE 對話錄影的工具，可以自動提取並拼接對話內容，生成易於閱讀的長圖。
 
+## 線上試用
+
+想先了解工具效果再考慮自架？你可以直接使用免費測試版本：
+
+👉 [https://line-conversation-processor.onrender.com/](https://line-conversation-processor.onrender.com/)
+
+> ⚠️ 注意：免費版僅供測試用途，建議上傳小於 8MB 的 MP4 影片，避免處理失敗。
+
+---
+
 ## 功能特點
 
 - 自動識別並裁剪 LINE 對話區域

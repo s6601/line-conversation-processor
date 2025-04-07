@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: line-conversation-processor
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn LINE對話取出:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+    disk:
+      name: uploads
+      mountPath: /opt/render/project/src/uploads
+      sizeGB: 1 

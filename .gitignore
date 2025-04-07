@@ -1,0 +1,6 @@
+uploads/
+output_frames/
+results/
+*.mp4
+*.mov
+*.avi

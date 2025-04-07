@@ -7,12 +7,14 @@ from flask import Flask, request, render_template_string
 
 app = Flask(__name__)
 
+
 def crop_chat_area(frame):
     """裁剪 LINE 聊天內容區域，排除狀態欄和輸入欄"""
     height, width = frame.shape[:2]
-    top_crop = int(height * 0.1)
-    bottom_crop = int(height * 0.85)
+    top_crop = int(height * 0.05)  # 裁剪掉上方 10%（狀態欄）
+    bottom_crop = int(height * 0.95)  # 裁剪到下方 85%（排除輸入欄）
     return frame[top_crop:bottom_crop, :]
+
 
 def calculate_pixel_diff(img1, img2):
     """計算兩張圖片的像素差異"""
@@ -21,33 +23,54 @@ def calculate_pixel_diff(img1, img2):
     diff = cv2.absdiff(img1, img2)
     return np.mean(diff)
 
-def find_overlap_and_crop_template(prev_img, new_img, template_height=50, match_threshold=0.9):
-    """利用模板匹配偵測 prev_img 與 new_img 的重疊區，並裁剪掉重疊部分。"""
+
+def find_overlap_and_crop_template(prev_img, new_img, template_height=50, match_threshold=0.2, overlap_retain=30):
+    """
+    利用模板匹配偵測 prev_img 與 new_img 的重疊區，並裁剪掉部分重疊部分，保留指定高度的重疊。
+
+    參數:
+    - prev_img: 前一張圖片
+    - new_img: 新圖片
+    - template_height: 模板高度，預設為 50 像素
+    - match_threshold: 匹配閾值，預設為 0.2
+    - overlap_retain: 保留的重疊高度，預設為 30 像素
+    """
     if prev_img.shape[1] != new_img.shape[1]:
         new_img = cv2.resize(new_img, (prev_img.shape[1], new_img.shape[0]))
 
-    template = prev_img[-template_height:, :]
-    search_height = min(new_img.shape[0], template_height * 2)
+    template = prev_img[-template_height:, :]  # 從前一張圖片底部提取模板
+    search_height = min(new_img.shape[0], template_height * 4)  # 搜索區域高度
     search_region = new_img[:search_height, :]
 
-    res = cv2.matchTemplate(search_region, template, cv2.TM_CCOEFF_NORMED)
-    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+    # 使用 SQDIFF_NORMED 匹配模式進行模板匹配
+    res = cv2.matchTemplate(search_region, template, cv2.TM_SQDIFF_NORMED)
+    min_val, _, min_loc, _ = cv2.minMaxLoc(res)
 
-    if max_val >= match_threshold:
-        crop_y = max_loc[1] + template_height
+    print(f"Template match value (SQDIFF): {min_val:.4f}")
+
+    if min_val <= match_threshold:  # 如果匹配成功
+        # 計算裁剪位置，保留指定的重疊高度
+        crop_y = max(0, min_loc[1] + template_height - overlap_retain)
         cropped_new = new_img[crop_y:, :]
     else:
+        # 如果匹配失敗，保留完整新圖片
         cropped_new = new_img
     return cropped_new
+
 
 def extract_and_stitch_frames(video_path, max_height=20000, diff_threshold=20):
     """
     提取影片中的關鍵幀，利用模板匹配去除相鄰幀重疊區，
     並垂直拼接成長圖，回傳「每個段落」對應的 base64 圖片清單。
+
+    參數:
+    - video_path: 影片路徑
+    - max_height: 拼接圖的最大高度，預設為 20000 像素
+    - diff_threshold: 像素差異閾值，預設為 20
     """
     cap = cv2.VideoCapture(video_path)
     fps = int(cap.get(cv2.CAP_PROP_FPS))
-    frame_interval = max(1, fps // 2)
+    frame_interval = max(1, fps // 2)  # 初始幀間隔
 
     frames = []
     frame_count = 0
@@ -73,12 +96,12 @@ def extract_and_stitch_frames(video_path, max_height=20000, diff_threshold=20):
                     frames.append(frame_cropped)
                     last_added_frame = frame_cropped
                 else:
-                    frame_interval = max(1, frame_interval // 2)
+                    frame_interval = max(1, frame_interval // 2)  # 減少間隔
             else:
                 frames.append(frame_cropped)
                 last_added_frame = frame_cropped
         else:
-            frame_interval = min(fps * 2, frame_interval + 1)
+            frame_interval = min(fps * 2, frame_interval + 1)  # 增加間隔
 
         frame_count += 1
 
@@ -91,15 +114,17 @@ def extract_and_stitch_frames(video_path, max_height=20000, diff_threshold=20):
     stitched_part = frames[0]
 
     for idx in range(1, len(frames)):
-        new_frame_cropped = find_overlap_and_crop_template(stitched_part, frames[idx],
-                                                           template_height=50,
-                                                           match_threshold=0.9)
+        new_frame_cropped = find_overlap_and_crop_template(
+            stitched_part,
+            frames[idx],
+            template_height=50,
+            match_threshold=0.2,
+            overlap_retain=5  # 保留 30 像素的重疊
+        )
         stitched_part = np.vstack([stitched_part, new_frame_cropped])
 
         if stitched_part.shape[0] >= max_height:
-            # 儲存當前的 stitched_part 成 base64
             stitched_images_base64.append(np_img_to_base64(stitched_part))
-            # 開新一段
             stitched_part = new_frame_cropped
 
     if stitched_part is not None:
@@ -107,14 +132,16 @@ def extract_and_stitch_frames(video_path, max_height=20000, diff_threshold=20):
 
     return stitched_images_base64
 
+
 def np_img_to_base64(np_img):
-    """把 numpy 圖片轉成 base64 字串，前端可用 <img src="data:image/jpg;base64, ..."> 顯示"""
+    """將 numpy 圖片轉成 base64 字串，前端可用 <img src="data:image/jpg;base64, ..."> 顯示"""
     _, buffer = cv2.imencode('.jpg', np_img)
     base64_str = base64.b64encode(buffer).decode('utf-8')
     return base64_str
 
+
 def generate_html(base64_list):
-    """直接動態產生整個 HTML 字串，內嵌 base64 圖片"""
+    """動態產生 HTML 字串，內嵌 base64 圖片"""
     html_content = """
     <html>
     <head>
@@ -145,6 +172,7 @@ def generate_html(base64_list):
     """
     return html_content
 
+
 # 前端首頁 HTML 表單
 INDEX_HTML = """
 <!doctype html>
@@ -166,9 +194,11 @@ INDEX_HTML = """
 </html>
 """
 
+
 @app.route('/', methods=['GET'])
 def index():
     return render_template_string(INDEX_HTML)
+
 
 @app.route('/upload', methods=['POST'])
 def upload():
@@ -184,7 +214,7 @@ def upload():
     if not file_data:
         return "上傳檔案為空", 400
 
-    # 用 NamedTemporaryFile 供 OpenCV 讀取 (臨時檔, 關閉後自動刪除)
+    # 用 NamedTemporaryFile 供 OpenCV 讀取 (臨時檔，關閉後自動刪除)
     with tempfile.NamedTemporaryFile(suffix='.mp4') as tmp:
         tmp.write(file_data)
         tmp.seek(0)
@@ -198,6 +228,7 @@ def upload():
     # 產生 HTML
     result_html = generate_html(stitched_base64_list)
     return render_template_string(result_html)
+
 
 if __name__ == "__main__":
     app.run(port=3000, debug=True)
